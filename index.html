@@ -35,9 +35,12 @@ input[type="range"]{width:100%}
 <div class="top-bar">
     <div class="timer" id="timer">00:00</div>
     <button onclick="startTimer()">开始</button>
+    <button onclick="pauseTimer()">暂停</button>
     <button onclick="resetAll()">重置</button>
+
     <input type="file" id="fileInput" accept="image/*" style="display:none" onchange="loadImage()">
     <button onclick="document.getElementById('fileInput').click()">加载图像</button>
+
     <button onclick="undo()">返回</button>
     <button onclick="clearMask()">清除全部</button>
     <button onclick="downloadMask()">保存掩码</button>
@@ -143,17 +146,29 @@ function startTimer(){
         alert("请先加载图像");
         return;
     }
+
+    if(timer) return;
+
     startTime=Date.now()-elapsed*1000;
-    if(timer) clearInterval(timer);
+
     timer=setInterval(()=>{
         elapsed=(Date.now()-startTime)/1000;
         document.getElementById("timer").innerText=formatTime(elapsed);
     },200);
 }
 
+function pauseTimer(){
+    if(timer){
+        clearInterval(timer);
+        timer=null;
+    }
+}
+
 function stopTimer(){
-    if(timer) clearInterval(timer);
-    timer=null;
+    if(timer){
+        clearInterval(timer);
+        timer=null;
+    }
 }
 
 function loadImage(){
@@ -167,8 +182,10 @@ function loadImage(){
     document.getElementById("maskName").innerText=baseName+"_mask.png";
 
     const reader=new FileReader();
+
     reader.onload=function(e){
         const img=new Image();
+
         img.onload=function(){
             currentImage=img;
             originalWidth=img.width;
@@ -188,9 +205,14 @@ function loadImage(){
 
             resizeCanvas(true);
             clearMask();
+
+            // 重点：图片真正加载完成并显示到画布后，才自动开始计时
+            startTimer();
         };
+
         img.src=e.target.result;
     };
+
     reader.readAsDataURL(file);
 }
 
@@ -234,12 +256,16 @@ function changeZoom(value){
     if(!currentImage) return;
 
     const canvasArea=document.getElementById("canvasArea");
+
     const oldZoom=zoom;
     const oldW=originalWidth*oldZoom;
     const oldH=originalHeight*oldZoom;
 
-    const mouseRatioX=lastMouseX/oldW;
-    const mouseRatioY=lastMouseY/oldH;
+    let mouseRatioX=lastMouseX/oldW;
+    let mouseRatioY=lastMouseY/oldH;
+
+    if(!isFinite(mouseRatioX)) mouseRatioX=0.5;
+    if(!isFinite(mouseRatioY)) mouseRatioY=0.5;
 
     zoom=Number(value)/100;
     document.getElementById("zoomText").innerText=value;
@@ -258,6 +284,7 @@ function changeZoom(value){
 
 function setTool(t){
     tool=t;
+
     document.getElementById("drawBtn").classList.remove("active");
     document.getElementById("eraseBtn").classList.remove("active");
 
@@ -295,12 +322,14 @@ function getMousePos(e){
 
 maskCanvas.addEventListener("mousedown",e=>{
     if(!currentImage) return;
+
     drawing=true;
     saveHistory();
 
     const pos=getMousePos(e);
     lastMouseX=pos.x;
     lastMouseY=pos.y;
+
     draw(pos.x,pos.y);
 });
 
@@ -322,6 +351,30 @@ maskCanvas.addEventListener("mouseleave",()=>{
     drawing=false;
 });
 
+maskCanvas.addEventListener("wheel",function(e){
+    if(!currentImage) return;
+
+    e.preventDefault();
+
+    const pos=getMousePos(e);
+    lastMouseX=pos.x;
+    lastMouseY=pos.y;
+
+    const slider=document.getElementById("zoomSlider");
+    let currentValue=Number(slider.value);
+
+    if(e.deltaY<0){
+        currentValue+=10;
+    }else{
+        currentValue-=10;
+    }
+
+    currentValue=Math.max(50,Math.min(300,currentValue));
+
+    slider.value=currentValue;
+    changeZoom(currentValue);
+},{passive:false});
+
 function draw(x,y){
     maskCtx.globalAlpha=1.0;
     maskCtx.lineCap="round";
@@ -338,13 +391,17 @@ function draw(x,y){
     maskCtx.beginPath();
     maskCtx.arc(x,y,brushSize,0,Math.PI*2);
     maskCtx.fill();
+
     maskCtx.globalCompositeOperation="source-over";
 }
 
 function saveHistory(){
     const data=maskCtx.getImageData(0,0,maskCanvas.width,maskCanvas.height);
     historyStack.push(data);
-    if(historyStack.length>30) historyStack.shift();
+
+    if(historyStack.length>30){
+        historyStack.shift();
+    }
 }
 
 function undo(){
@@ -352,6 +409,7 @@ function undo(){
         alert("没有可返回的操作");
         return;
     }
+
     const data=historyStack.pop();
     maskCtx.putImageData(data,0,0);
     updatePixelCount();
@@ -359,17 +417,23 @@ function undo(){
 
 function clearMask(){
     if(!currentImage) return;
+
     maskCtx.clearRect(0,0,maskCanvas.width,maskCanvas.height);
     updatePixelCount();
 }
 
 function resetAll(){
     if(!currentImage) return;
+
     clearMask();
     historyStack=[];
     elapsed=0;
     document.getElementById("timer").innerText="00:00";
     stopTimer();
+
+    // 重置后是否重新开始计时：这里保持不自动开始
+    // 如果想重置后也继续计时，把下一行取消注释：
+    // startTimer();
 }
 
 function updatePixelCount(){
@@ -379,9 +443,11 @@ function updatePixelCount(){
     const data=imageData.data;
 
     let count=0;
+
     for(let i=3;i<data.length;i+=4){
         if(data[i]>0) count++;
     }
+
     document.getElementById("pixelCount").innerText=count;
 }
 
@@ -389,8 +455,8 @@ function getBinaryMaskCanvas(){
     const tempCanvas=document.createElement("canvas");
     tempCanvas.width=originalWidth;
     tempCanvas.height=originalHeight;
-    const tempCtx=tempCanvas.getContext("2d");
 
+    const tempCtx=tempCanvas.getContext("2d");
     tempCtx.drawImage(maskCanvas,0,0,originalWidth,originalHeight);
 
     const imageData=tempCtx.getImageData(0,0,originalWidth,originalHeight);
