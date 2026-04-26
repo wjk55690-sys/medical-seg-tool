@@ -43,7 +43,7 @@ input[type="range"]{width:100%}
 
     <button onclick="undo()">返回</button>
     <button onclick="clearMask()">清除全部</button>
-    <button onclick="downloadMask()">保存掩码</button>
+    <button onclick="saveAll()">保存掩码</button>
     <button onclick="submitMask()">提交</button>
 </div>
 
@@ -100,6 +100,7 @@ input[type="range"]{width:100%}
             <div class="section-title">掩码信息</div>
             <p>已标注像素：<b id="pixelCount">0</b></p>
             <p>掩码命名：<span id="maskName">—</span></p>
+            <p>信息文件：<span id="infoName">—</span></p>
         </div>
     </div>
 </div>
@@ -132,6 +133,9 @@ let timer=null;
 let startTime=null;
 let elapsed=0;
 
+let annotationStartDate=null;
+let annotationEndDate=null;
+
 let lastMouseX=0;
 let lastMouseY=0;
 
@@ -141,6 +145,17 @@ function formatTime(seconds){
     return String(m).padStart(2,"0")+":"+String(s).padStart(2,"0");
 }
 
+function formatDate(date){
+    if(!date) return "";
+    const y=date.getFullYear();
+    const mo=String(date.getMonth()+1).padStart(2,"0");
+    const d=String(date.getDate()).padStart(2,"0");
+    const h=String(date.getHours()).padStart(2,"0");
+    const mi=String(date.getMinutes()).padStart(2,"0");
+    const s=String(date.getSeconds()).padStart(2,"0");
+    return `${y}-${mo}-${d} ${h}:${mi}:${s}`;
+}
+
 function startTimer(){
     if(!currentImage){
         alert("请先加载图像");
@@ -148,6 +163,10 @@ function startTimer(){
     }
 
     if(timer) return;
+
+    if(!annotationStartDate){
+        annotationStartDate=new Date();
+    }
 
     startTime=Date.now()-elapsed*1000;
 
@@ -180,6 +199,7 @@ function loadImage(){
 
     const baseName=getBaseName(currentFileName);
     document.getElementById("maskName").innerText=baseName+"_mask.png";
+    document.getElementById("infoName").innerText=baseName+"_info.txt";
 
     const reader=new FileReader();
 
@@ -200,13 +220,16 @@ function loadImage(){
 
             historyStack=[];
             elapsed=0;
+            annotationStartDate=null;
+            annotationEndDate=null;
+
             document.getElementById("timer").innerText="00:00";
             stopTimer();
 
             resizeCanvas(true);
             clearMask();
 
-            // 重点：图片真正加载完成并显示到画布后，才自动开始计时
+            // 图像真正加载完成并显示到画布后，自动开始计时
             startTimer();
         };
 
@@ -428,12 +451,10 @@ function resetAll(){
     clearMask();
     historyStack=[];
     elapsed=0;
+    annotationStartDate=null;
+    annotationEndDate=null;
     document.getElementById("timer").innerText="00:00";
     stopTimer();
-
-    // 重置后是否重新开始计时：这里保持不自动开始
-    // 如果想重置后也继续计时，把下一行取消注释：
-    // startTimer();
 }
 
 function updatePixelCount(){
@@ -449,6 +470,21 @@ function updatePixelCount(){
     }
 
     document.getElementById("pixelCount").innerText=count;
+}
+
+function getMaskPixelCount(){
+    if(!currentImage) return 0;
+
+    const tempCanvas=getBinaryMaskCanvas();
+    const tempCtx=tempCanvas.getContext("2d");
+    const imageData=tempCtx.getImageData(0,0,tempCanvas.width,tempCanvas.height);
+    const data=imageData.data;
+
+    let count=0;
+    for(let i=0;i<data.length;i+=4){
+        if(data[i]>0) count++;
+    }
+    return count;
 }
 
 function getBinaryMaskCanvas(){
@@ -476,12 +512,7 @@ function getBinaryMaskCanvas(){
     return tempCanvas;
 }
 
-function downloadMask(){
-    if(!currentImage){
-        alert("请先加载图像");
-        return;
-    }
-
+function downloadMaskFile(){
     const maskCanvasOut=getBinaryMaskCanvas();
     const baseName=getBaseName(currentFileName);
     const maskName=baseName+"_mask.png";
@@ -492,19 +523,74 @@ function downloadMask(){
     link.click();
 }
 
+function downloadInfoFile(){
+    const baseName=getBaseName(currentFileName);
+    const maskName=baseName+"_mask.png";
+    const infoName=baseName+"_info.txt";
+
+    const maskPixels=getMaskPixelCount();
+    const totalPixels=originalWidth*originalHeight;
+    const maskRatio=totalPixels>0 ? (maskPixels/totalPixels*100).toFixed(4) : "0.0000";
+
+    if(!annotationEndDate){
+        annotationEndDate=new Date();
+    }
+
+    const content =
+`Original Image: ${currentFileName}
+Mask Image: ${maskName}
+Info File: ${infoName}
+
+Start Time: ${formatDate(annotationStartDate)}
+End Time: ${formatDate(annotationEndDate)}
+Elapsed Time: ${elapsed.toFixed(2)} seconds
+
+Image Width: ${originalWidth}
+Image Height: ${originalHeight}
+Image Size: ${originalWidth} x ${originalHeight}
+
+Mask Pixels: ${maskPixels}
+Total Pixels: ${totalPixels}
+Mask Ratio: ${maskRatio}%
+`;
+
+    const blob=new Blob([content],{type:"text/plain;charset=utf-8"});
+    const link=document.createElement("a");
+    link.download=infoName;
+    link.href=URL.createObjectURL(blob);
+    link.click();
+    URL.revokeObjectURL(link.href);
+}
+
+function saveAll(){
+    if(!currentImage){
+        alert("请先加载图像");
+        return;
+    }
+
+    annotationEndDate=new Date();
+
+    downloadMaskFile();
+    downloadInfoFile();
+}
+
 function submitMask(){
     if(!currentImage){
         alert("请先加载图像");
         return;
     }
 
+    annotationEndDate=new Date();
     stopTimer();
-    downloadMask();
+
+    downloadMaskFile();
+    downloadInfoFile();
 
     alert(
         "提交完成\\n" +
         "用时：" + formatTime(elapsed) + "\\n" +
-        "掩码文件名：" + getBaseName(currentFileName) + "_mask.png"
+        "掩码文件名：" + getBaseName(currentFileName) + "_mask.png\\n" +
+        "信息文件名：" + getBaseName(currentFileName) + "_info.txt"
     );
 }
 </script>
