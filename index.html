@@ -122,7 +122,6 @@ const imgCtx=imageCanvas.getContext("2d");
 const maskCtx=maskCanvas.getContext("2d");
 const overlayCtx=overlayCanvas.getContext("2d");
 
-// 原图尺寸mask缓冲（所有绘制都先落到这里，避免缩放误差）
 const baseMaskCanvas=document.createElement("canvas");
 const baseMaskCtx=baseMaskCanvas.getContext("2d");
 
@@ -132,20 +131,81 @@ let historyStack=[],timer=null,startTime=null,elapsed=0;
 let annotationStartDate=null,annotationEndDate=null;
 let lastMouseX=0,lastMouseY=0;
 
-// 多边形点：统一存原图坐标（关键修复）
 let polygonPoints=[];
 let polygonHover=null;
 
-function formatTime(seconds){const m=Math.floor(seconds/60),s=Math.floor(seconds%60);return String(m).padStart(2,"0")+":"+String(s).padStart(2,"0")}
-function formatDate(date){if(!date)return"";const y=date.getFullYear(),mo=String(date.getMonth()+1).padStart(2,"0"),d=String(date.getDate()).padStart(2,"0"),h=String(date.getHours()).padStart(2,"0"),mi=String(date.getMinutes()).padStart(2,"0"),s=String(date.getSeconds()).padStart(2,"0");return `${y}-${mo}-${d} ${h}:${mi}:${s}`}
+function disableSmoothing(){
+    imgCtx.imageSmoothingEnabled=false;
+    maskCtx.imageSmoothingEnabled=false;
+    overlayCtx.imageSmoothingEnabled=false;
+    baseMaskCtx.imageSmoothingEnabled=false;
 
-function startTimer(){if(!currentImage){alert("请先加载图像");return}if(timer)return;if(!annotationStartDate)annotationStartDate=new Date();startTime=Date.now()-elapsed*1000;timer=setInterval(()=>{elapsed=(Date.now()-startTime)/1000;document.getElementById("timer").innerText=formatTime(elapsed)},200)}
-function pauseTimer(){if(timer){clearInterval(timer);timer=null}}
-function stopTimer(){if(timer){clearInterval(timer);timer=null}}
+    imgCtx.webkitImageSmoothingEnabled=false;
+    maskCtx.webkitImageSmoothingEnabled=false;
+    overlayCtx.webkitImageSmoothingEnabled=false;
+    baseMaskCtx.webkitImageSmoothingEnabled=false;
+
+    imgCtx.mozImageSmoothingEnabled=false;
+    maskCtx.mozImageSmoothingEnabled=false;
+    overlayCtx.mozImageSmoothingEnabled=false;
+    baseMaskCtx.mozImageSmoothingEnabled=false;
+}
+
+disableSmoothing();
+
+function formatTime(seconds){
+    const m=Math.floor(seconds/60);
+    const s=Math.floor(seconds%60);
+    return String(m).padStart(2,"0")+":"+String(s).padStart(2,"0");
+}
+
+function formatDate(date){
+    if(!date)return"";
+    const y=date.getFullYear();
+    const mo=String(date.getMonth()+1).padStart(2,"0");
+    const d=String(date.getDate()).padStart(2,"0");
+    const h=String(date.getHours()).padStart(2,"0");
+    const mi=String(date.getMinutes()).padStart(2,"0");
+    const s=String(date.getSeconds()).padStart(2,"0");
+    return `${y}-${mo}-${d} ${h}:${mi}:${s}`;
+}
+
+function startTimer(){
+    if(!currentImage){
+        alert("请先加载图像");
+        return;
+    }
+    if(timer)return;
+
+    if(!annotationStartDate){
+        annotationStartDate=new Date();
+    }
+
+    startTime=Date.now()-elapsed*1000;
+
+    timer=setInterval(()=>{
+        elapsed=(Date.now()-startTime)/1000;
+        document.getElementById("timer").innerText=formatTime(elapsed);
+    },200);
+}
+
+function pauseTimer(){
+    if(timer){
+        clearInterval(timer);
+        timer=null;
+    }
+}
+
+function stopTimer(){
+    if(timer){
+        clearInterval(timer);
+        timer=null;
+    }
+}
 
 function loadImage(){
     const file=document.getElementById("fileInput").files[0];
-    if(!file) return;
+    if(!file)return;
 
     currentFileName=file.name;
     document.getElementById("fileName").innerText=currentFileName;
@@ -155,8 +215,10 @@ function loadImage(){
     document.getElementById("infoName").innerText=baseName+"_info.txt";
 
     const reader=new FileReader();
+
     reader.onload=e=>{
         const img=new Image();
+
         img.onload=()=>{
             currentImage=img;
             originalWidth=img.width;
@@ -164,6 +226,7 @@ function loadImage(){
 
             baseMaskCanvas.width=originalWidth;
             baseMaskCanvas.height=originalHeight;
+            disableSmoothing();
             baseMaskCtx.clearRect(0,0,originalWidth,originalHeight);
 
             zoom=1.0;
@@ -173,8 +236,13 @@ function loadImage(){
             document.getElementById("emptyTip").style.display="none";
             document.getElementById("canvasWrapper").style.display="inline-block";
 
-            historyStack=[]; elapsed=0; annotationStartDate=null; annotationEndDate=null;
-            polygonPoints=[]; polygonHover=null;
+            historyStack=[];
+            elapsed=0;
+            annotationStartDate=null;
+            annotationEndDate=null;
+            polygonPoints=[];
+            polygonHover=null;
+
             document.getElementById("timer").innerText="00:00";
             stopTimer();
 
@@ -183,19 +251,30 @@ function loadImage(){
             clearOverlay();
             startTimer();
         };
+
         img.src=e.target.result;
     };
+
     reader.readAsDataURL(file);
 }
 
-function getBaseName(filename){const idx=filename.lastIndexOf(".");return idx===-1?filename:filename.substring(0,idx)}
+function getBaseName(filename){
+    const idx=filename.lastIndexOf(".");
+    return idx===-1?filename:filename.substring(0,idx);
+}
 
 function resizeCanvas(){
-    const w=Math.floor(originalWidth*zoom), h=Math.floor(originalHeight*zoom);
+    const w=Math.floor(originalWidth*zoom);
+    const h=Math.floor(originalHeight*zoom);
 
-    imageCanvas.width=w; imageCanvas.height=h;
-    maskCanvas.width=w; maskCanvas.height=h;
-    overlayCanvas.width=w; overlayCanvas.height=h;
+    imageCanvas.width=w;
+    imageCanvas.height=h;
+    maskCanvas.width=w;
+    maskCanvas.height=h;
+    overlayCanvas.width=w;
+    overlayCanvas.height=h;
+
+    disableSmoothing();
 
     const wrapper=document.getElementById("canvasWrapper");
     wrapper.style.width=w+"px";
@@ -210,22 +289,25 @@ function resizeCanvas(){
 
 function redrawMaskCanvas(){
     maskCtx.clearRect(0,0,maskCanvas.width,maskCanvas.height);
+    maskCtx.imageSmoothingEnabled=false;
     maskCtx.drawImage(baseMaskCanvas,0,0,maskCanvas.width,maskCanvas.height);
     maskCanvas.style.opacity=alpha;
 }
 
 function changeZoom(value){
-    if(!currentImage) return;
+    if(!currentImage)return;
 
     const canvasArea=document.getElementById("canvasArea");
+
     const oldZoom=zoom;
     const oldW=originalWidth*oldZoom;
     const oldH=originalHeight*oldZoom;
 
     let mouseRatioX=lastMouseX/oldW;
     let mouseRatioY=lastMouseY/oldH;
-    if(!isFinite(mouseRatioX)) mouseRatioX=0.5;
-    if(!isFinite(mouseRatioY)) mouseRatioY=0.5;
+
+    if(!isFinite(mouseRatioX))mouseRatioX=0.5;
+    if(!isFinite(mouseRatioY))mouseRatioY=0.5;
 
     zoom=Number(value)/100;
     document.getElementById("zoomText").innerText=value;
@@ -234,6 +316,7 @@ function changeZoom(value){
 
     const newW=originalWidth*zoom;
     const newH=originalHeight*zoom;
+
     const targetX=mouseRatioX*newW;
     const targetY=mouseRatioY*newH;
 
@@ -243,46 +326,75 @@ function changeZoom(value){
 
 function setTool(t){
     tool=t;
+
     document.getElementById("drawBtn").classList.remove("active");
     document.getElementById("polygonBtn").classList.remove("active");
     document.getElementById("eraseBtn").classList.remove("active");
 
-    if(t==="draw") document.getElementById("drawBtn").classList.add("active");
-    if(t==="polygon") document.getElementById("polygonBtn").classList.add("active");
-    if(t==="erase") document.getElementById("eraseBtn").classList.add("active");
+    if(t==="draw")document.getElementById("drawBtn").classList.add("active");
+    if(t==="polygon")document.getElementById("polygonBtn").classList.add("active");
+    if(t==="erase")document.getElementById("eraseBtn").classList.add("active");
 
-    if(t!=="polygon"){polygonPoints=[]; polygonHover=null; clearOverlay();}
+    if(t!=="polygon"){
+        polygonPoints=[];
+        polygonHover=null;
+        clearOverlay();
+    }
 }
 
-function setColor(color,el){drawColor=color;document.querySelectorAll(".color-dot").forEach(e=>e.classList.remove("active"));el.classList.add("active");redrawPolygonOverlay()}
-function changeBrush(value){brushSize=Number(value);document.getElementById("brushText").innerText=value}
-function changeAlpha(value){alpha=Number(value)/100;document.getElementById("alphaText").innerText=value;maskCanvas.style.opacity=alpha}
+function setColor(color,el){
+    drawColor=color;
+    document.querySelectorAll(".color-dot").forEach(e=>e.classList.remove("active"));
+    el.classList.add("active");
+    redrawPolygonOverlay();
+}
+
+function changeBrush(value){
+    brushSize=Number(value);
+    document.getElementById("brushText").innerText=value;
+}
+
+function changeAlpha(value){
+    alpha=Number(value)/100;
+    document.getElementById("alphaText").innerText=value;
+    maskCanvas.style.opacity=alpha;
+}
 
 function getMousePos(e){
     const rect=maskCanvas.getBoundingClientRect();
-    return {x:e.clientX-rect.left,y:e.clientY-rect.top};
+    return {
+        x:e.clientX-rect.left,
+        y:e.clientY-rect.top
+    };
 }
 
-// 画布坐标 -> 原图坐标（关键修复）
-function canvasToImage(x,y){ return {x:x/zoom,y:y/zoom}; }
-// 原图坐标 -> 画布坐标（关键修复）
-function imageToCanvas(x,y){ return {x:x*zoom,y:y*zoom}; }
+function canvasToImage(x,y){
+    return {x:x/zoom,y:y/zoom};
+}
+
+function imageToCanvas(x,y){
+    return {x:x*zoom,y:y*zoom};
+}
 
 maskCanvas.addEventListener("mousedown",e=>{
-    if(!currentImage) return;
+    if(!currentImage)return;
 
     const pos=getMousePos(e);
-    lastMouseX=pos.x; lastMouseY=pos.y;
+    lastMouseX=pos.x;
+    lastMouseY=pos.y;
 
     if(tool==="polygon"){
-        if(e.button===2) return;
+        if(e.button===2)return;
 
         const imgPos=canvasToImage(pos.x,pos.y);
 
-        if(e.detail===2){ finalizePolygon(); return; }
+        if(e.detail===2){
+            finalizePolygon();
+            return;
+        }
 
-        polygonPoints.push(imgPos);      // 存原图坐标
-        polygonHover=imgPos;            // 存原图坐标
+        polygonPoints.push(imgPos);
+        polygonHover=imgPos;
         redrawPolygonOverlay();
         return;
     }
@@ -297,43 +409,55 @@ maskCanvas.addEventListener("mousedown",e=>{
 
 maskCanvas.addEventListener("mousemove",e=>{
     const pos=getMousePos(e);
-    lastMouseX=pos.x; lastMouseY=pos.y;
+    lastMouseX=pos.x;
+    lastMouseY=pos.y;
 
     if(tool==="polygon"){
         if(polygonPoints.length>0){
-            polygonHover=canvasToImage(pos.x,pos.y);   // 存原图坐标
+            polygonHover=canvasToImage(pos.x,pos.y);
             redrawPolygonOverlay();
         }
         return;
     }
 
-    if(!drawing) return;
+    if(!drawing)return;
+
     const imgPos=canvasToImage(pos.x,pos.y);
     drawToBase(imgPos.x,imgPos.y);
     redrawMaskCanvas();
 });
 
-maskCanvas.addEventListener("mouseup",()=>{drawing=false;updatePixelCount()});
-maskCanvas.addEventListener("mouseleave",()=>{drawing=false});
+maskCanvas.addEventListener("mouseup",()=>{
+    drawing=false;
+    updatePixelCount();
+});
+
+maskCanvas.addEventListener("mouseleave",()=>{
+    drawing=false;
+});
 
 maskCanvas.addEventListener("contextmenu",e=>{
     if(tool==="polygon"){
         e.preventDefault();
-        polygonPoints=[]; polygonHover=null;
+        polygonPoints=[];
+        polygonHover=null;
         clearOverlay();
     }
 });
 
 maskCanvas.addEventListener("wheel",function(e){
-    if(!currentImage) return;
+    if(!currentImage)return;
+
     e.preventDefault();
 
     const pos=getMousePos(e);
-    lastMouseX=pos.x; lastMouseY=pos.y;
+    lastMouseX=pos.x;
+    lastMouseY=pos.y;
 
     const slider=document.getElementById("zoomSlider");
     let currentValue=Number(slider.value);
-    currentValue += (e.deltaY<0 ? 10 : -10);
+
+    currentValue+=(e.deltaY<0?10:-10);
     currentValue=Math.max(50,Math.min(300,currentValue));
 
     slider.value=currentValue;
@@ -341,8 +465,10 @@ maskCanvas.addEventListener("wheel",function(e){
 },{passive:false});
 
 window.addEventListener("keydown",e=>{
-    if(tool==="polygon" && e.key==="Escape"){
-        polygonPoints=[]; polygonHover=null; clearOverlay();
+    if(tool==="polygon"&&e.key==="Escape"){
+        polygonPoints=[];
+        polygonHover=null;
+        clearOverlay();
     }
 });
 
@@ -360,23 +486,28 @@ function drawToBase(x,y){
     }
 
     baseMaskCtx.beginPath();
-    baseMaskCtx.arc(x,y,brushSize/zoom,0,Math.PI*2); // 保持视觉笔刷一致
+    baseMaskCtx.arc(x,y,brushSize/zoom,0,Math.PI*2);
     baseMaskCtx.fill();
 
     baseMaskCtx.globalCompositeOperation="source-over";
 }
 
-function clearOverlay(){overlayCtx.clearRect(0,0,overlayCanvas.width,overlayCanvas.height)}
+function clearOverlay(){
+    overlayCtx.clearRect(0,0,overlayCanvas.width,overlayCanvas.height);
+}
 
 function redrawPolygonOverlay(){
     clearOverlay();
-    if(polygonPoints.length===0) return;
 
+    if(polygonPoints.length===0)return;
+
+    overlayCtx.imageSmoothingEnabled=false;
     overlayCtx.strokeStyle=drawColor;
     overlayCtx.fillStyle=drawColor;
     overlayCtx.lineWidth=2;
 
     const p0=imageToCanvas(polygonPoints[0].x,polygonPoints[0].y);
+
     overlayCtx.beginPath();
     overlayCtx.moveTo(p0.x,p0.y);
 
@@ -401,12 +532,13 @@ function redrawPolygonOverlay(){
 }
 
 function finalizePolygon(){
-    if(polygonPoints.length<3) return;
+    if(polygonPoints.length<3)return;
 
     saveHistory();
 
     baseMaskCtx.globalCompositeOperation="source-over";
     baseMaskCtx.fillStyle=drawColor;
+
     baseMaskCtx.beginPath();
     baseMaskCtx.moveTo(polygonPoints[0].x,polygonPoints[0].y);
 
@@ -417,7 +549,9 @@ function finalizePolygon(){
     baseMaskCtx.closePath();
     baseMaskCtx.fill();
 
-    polygonPoints=[]; polygonHover=null;
+    polygonPoints=[];
+    polygonHover=null;
+
     clearOverlay();
     redrawMaskCanvas();
     updatePixelCount();
@@ -427,45 +561,71 @@ function saveHistory(){
     const temp=document.createElement("canvas");
     temp.width=baseMaskCanvas.width;
     temp.height=baseMaskCanvas.height;
-    temp.getContext("2d").drawImage(baseMaskCanvas,0,0);
+
+    const tempCtx=temp.getContext("2d");
+    tempCtx.imageSmoothingEnabled=false;
+    tempCtx.drawImage(baseMaskCanvas,0,0);
+
     historyStack.push(temp);
-    if(historyStack.length>30) historyStack.shift();
+
+    if(historyStack.length>30){
+        historyStack.shift();
+    }
 }
 
 function undo(){
-    if(historyStack.length===0){alert("没有可返回的操作");return}
+    if(historyStack.length===0){
+        alert("没有可返回的操作");
+        return;
+    }
+
     const prev=historyStack.pop();
+
     baseMaskCtx.clearRect(0,0,baseMaskCanvas.width,baseMaskCanvas.height);
+    baseMaskCtx.imageSmoothingEnabled=false;
     baseMaskCtx.drawImage(prev,0,0);
+
     redrawMaskCanvas();
     updatePixelCount();
 }
 
 function clearMask(){
-    if(!currentImage) return;
+    if(!currentImage)return;
+
     baseMaskCtx.clearRect(0,0,baseMaskCanvas.width,baseMaskCanvas.height);
     redrawMaskCanvas();
     updatePixelCount();
 }
 
 function resetAll(){
-    if(!currentImage) return;
+    if(!currentImage)return;
+
     clearMask();
+
     historyStack=[];
     elapsed=0;
     annotationStartDate=null;
     annotationEndDate=null;
-    polygonPoints=[]; polygonHover=null;
+    polygonPoints=[];
+    polygonHover=null;
+
     clearOverlay();
+
     document.getElementById("timer").innerText="00:00";
     stopTimer();
 }
 
 function updatePixelCount(){
-    if(!currentImage) return;
+    if(!currentImage)return;
+
     const data=baseMaskCtx.getImageData(0,0,baseMaskCanvas.width,baseMaskCanvas.height).data;
+
     let count=0;
-    for(let i=3;i<data.length;i+=4) if(data[i]>0) count++;
+
+    for(let i=3;i<data.length;i+=4){
+        if(data[i]>0)count++;
+    }
+
     document.getElementById("pixelCount").innerText=count;
 }
 
@@ -475,6 +635,7 @@ function getBinaryMaskCanvas(){
     tempCanvas.height=originalHeight;
 
     const tempCtx=tempCanvas.getContext("2d");
+    tempCtx.imageSmoothingEnabled=false;
     tempCtx.drawImage(baseMaskCanvas,0,0);
 
     const imageData=tempCtx.getImageData(0,0,originalWidth,originalHeight);
@@ -482,7 +643,10 @@ function getBinaryMaskCanvas(){
 
     for(let i=0;i<data.length;i+=4){
         const value=data[i+3]>0?255:0;
-        data[i]=value; data[i+1]=value; data[i+2]=value; data[i+3]=255;
+        data[i]=value;
+        data[i+1]=value;
+        data[i+2]=value;
+        data[i+3]=255;
     }
 
     tempCtx.putImageData(imageData,0,0);
@@ -491,25 +655,41 @@ function getBinaryMaskCanvas(){
 
 function getMaskPixelCount(){
     const data=getBinaryMaskCanvas().getContext("2d").getImageData(0,0,originalWidth,originalHeight).data;
+
     let count=0;
-    for(let i=0;i<data.length;i+=4) if(data[i]>0) count++;
+
+    for(let i=0;i<data.length;i+=4){
+        if(data[i]>0)count++;
+    }
+
     return count;
 }
 
 function downloadMaskFile(){
     const out=getBinaryMaskCanvas();
     const maskName=getBaseName(currentFileName)+"_mask.png";
+
     const link=document.createElement("a");
     link.download=maskName;
     link.href=out.toDataURL("image/png");
-    document.body.appendChild(link); link.click(); document.body.removeChild(link);
+
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
 }
 
 function downloadInfoFile(){
-    const baseName=getBaseName(currentFileName), maskName=baseName+"_mask.png", infoName=baseName+"_info.txt";
-    const maskPixels=getMaskPixelCount(), totalPixels=originalWidth*originalHeight;
+    const baseName=getBaseName(currentFileName);
+    const maskName=baseName+"_mask.png";
+    const infoName=baseName+"_info.txt";
+
+    const maskPixels=getMaskPixelCount();
+    const totalPixels=originalWidth*originalHeight;
     const maskRatio=totalPixels>0?(maskPixels/totalPixels*100).toFixed(4):"0.0000";
-    if(!annotationEndDate) annotationEndDate=new Date();
+
+    if(!annotationEndDate){
+        annotationEndDate=new Date();
+    }
 
     const content=`Original Image: ${currentFileName}
 Mask Image: ${maskName}
@@ -530,29 +710,53 @@ Mask Ratio: ${maskRatio}%
 
     const blob=new Blob([content],{type:"text/plain;charset=utf-8"});
     const url=URL.createObjectURL(blob);
+
     const link=document.createElement("a");
     link.download=infoName;
     link.href=url;
-    document.body.appendChild(link); link.click(); document.body.removeChild(link);
+
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
     setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
 
 function saveAll(){
-    if(!currentImage){alert("请先加载图像");return}
+    if(!currentImage){
+        alert("请先加载图像");
+        return;
+    }
+
     annotationEndDate=new Date();
+
     downloadMaskFile();
-    setTimeout(()=>downloadInfoFile(),500);
+
+    setTimeout(()=>{
+        downloadInfoFile();
+    },500);
 }
 
 function submitMask(){
-    if(!currentImage){alert("请先加载图像");return}
+    if(!currentImage){
+        alert("请先加载图像");
+        return;
+    }
+
     annotationEndDate=new Date();
     stopTimer();
 
     downloadMaskFile();
+
     setTimeout(()=>{
         downloadInfoFile();
-        alert("提交完成\n用时："+formatTime(elapsed)+"\n掩码文件名："+getBaseName(currentFileName)+"_mask.png\n信息文件名："+getBaseName(currentFileName)+"_info.txt");
+
+        alert(
+            "提交完成\n"+
+            "用时："+formatTime(elapsed)+"\n"+
+            "掩码文件名："+getBaseName(currentFileName)+"_mask.png\n"+
+            "信息文件名："+getBaseName(currentFileName)+"_info.txt"
+        );
     },500);
 }
 </script>
