@@ -122,26 +122,34 @@ const imgCtx=imageCanvas.getContext("2d");
 const maskCtx=maskCanvas.getContext("2d");
 const overlayCtx=overlayCanvas.getContext("2d");
 
+// 原图尺寸mask缓冲（所有绘制都先落到这里，避免缩放误差）
+const baseMaskCanvas=document.createElement("canvas");
+const baseMaskCtx=baseMaskCanvas.getContext("2d");
+
 let currentImage=null,currentFileName="",originalWidth=0,originalHeight=0;
 let drawing=false,tool="draw",brushSize=8,drawColor="#ff4d4f",alpha=0.6,zoom=1.0;
 let historyStack=[],timer=null,startTime=null,elapsed=0;
 let annotationStartDate=null,annotationEndDate=null;
 let lastMouseX=0,lastMouseY=0;
 
+// 多边形点：统一存原图坐标（关键修复）
 let polygonPoints=[];
 let polygonHover=null;
 
 function formatTime(seconds){const m=Math.floor(seconds/60),s=Math.floor(seconds%60);return String(m).padStart(2,"0")+":"+String(s).padStart(2,"0")}
-function formatDate(date){if(!date) return "";const y=date.getFullYear(),mo=String(date.getMonth()+1).padStart(2,"0"),d=String(date.getDate()).padStart(2,"0"),h=String(date.getHours()).padStart(2,"0"),mi=String(date.getMinutes()).padStart(2,"0"),s=String(date.getSeconds()).padStart(2,"0");return `${y}-${mo}-${d} ${h}:${mi}:${s}`}
+function formatDate(date){if(!date)return"";const y=date.getFullYear(),mo=String(date.getMonth()+1).padStart(2,"0"),d=String(date.getDate()).padStart(2,"0"),h=String(date.getHours()).padStart(2,"0"),mi=String(date.getMinutes()).padStart(2,"0"),s=String(date.getSeconds()).padStart(2,"0");return `${y}-${mo}-${d} ${h}:${mi}:${s}`}
 
 function startTimer(){if(!currentImage){alert("请先加载图像");return}if(timer)return;if(!annotationStartDate)annotationStartDate=new Date();startTime=Date.now()-elapsed*1000;timer=setInterval(()=>{elapsed=(Date.now()-startTime)/1000;document.getElementById("timer").innerText=formatTime(elapsed)},200)}
 function pauseTimer(){if(timer){clearInterval(timer);timer=null}}
 function stopTimer(){if(timer){clearInterval(timer);timer=null}}
 
 function loadImage(){
-    const file=document.getElementById("fileInput").files[0]; if(!file) return;
+    const file=document.getElementById("fileInput").files[0];
+    if(!file) return;
+
     currentFileName=file.name;
     document.getElementById("fileName").innerText=currentFileName;
+
     const baseName=getBaseName(currentFileName);
     document.getElementById("maskName").innerText=baseName+"_mask.png";
     document.getElementById("infoName").innerText=baseName+"_info.txt";
@@ -150,16 +158,30 @@ function loadImage(){
     reader.onload=e=>{
         const img=new Image();
         img.onload=()=>{
-            currentImage=img; originalWidth=img.width; originalHeight=img.height;
-            zoom=1.0; document.getElementById("zoomSlider").value=100; document.getElementById("zoomText").innerText=100;
+            currentImage=img;
+            originalWidth=img.width;
+            originalHeight=img.height;
+
+            baseMaskCanvas.width=originalWidth;
+            baseMaskCanvas.height=originalHeight;
+            baseMaskCtx.clearRect(0,0,originalWidth,originalHeight);
+
+            zoom=1.0;
+            document.getElementById("zoomSlider").value=100;
+            document.getElementById("zoomText").innerText=100;
+
             document.getElementById("emptyTip").style.display="none";
             document.getElementById("canvasWrapper").style.display="inline-block";
 
             historyStack=[]; elapsed=0; annotationStartDate=null; annotationEndDate=null;
             polygonPoints=[]; polygonHover=null;
-            document.getElementById("timer").innerText="00:00"; stopTimer();
+            document.getElementById("timer").innerText="00:00";
+            stopTimer();
 
-            resizeCanvas(true); clearMask(); clearOverlay(); startTimer();
+            resizeCanvas();
+            clearMask();
+            clearOverlay();
+            startTimer();
         };
         img.src=e.target.result;
     };
@@ -168,37 +190,53 @@ function loadImage(){
 
 function getBaseName(filename){const idx=filename.lastIndexOf(".");return idx===-1?filename:filename.substring(0,idx)}
 
-function resizeCanvas(firstLoad=false){
-    const oldMask=document.createElement("canvas");
-    oldMask.width=maskCanvas.width; oldMask.height=maskCanvas.height;
-    if(maskCanvas.width>0&&maskCanvas.height>0) oldMask.getContext("2d").drawImage(maskCanvas,0,0);
-
+function resizeCanvas(){
     const w=Math.floor(originalWidth*zoom), h=Math.floor(originalHeight*zoom);
+
     imageCanvas.width=w; imageCanvas.height=h;
     maskCanvas.width=w; maskCanvas.height=h;
     overlayCanvas.width=w; overlayCanvas.height=h;
 
     const wrapper=document.getElementById("canvasWrapper");
-    wrapper.style.width=w+"px"; wrapper.style.height=h+"px";
+    wrapper.style.width=w+"px";
+    wrapper.style.height=h+"px";
 
-    imgCtx.clearRect(0,0,w,h); imgCtx.drawImage(currentImage,0,0,w,h);
-    if(!firstLoad && oldMask.width>0 && oldMask.height>0) maskCtx.drawImage(oldMask,0,0,w,h);
-    maskCanvas.style.opacity=alpha;
+    imgCtx.clearRect(0,0,w,h);
+    imgCtx.drawImage(currentImage,0,0,w,h);
+
+    redrawMaskCanvas();
     redrawPolygonOverlay();
+}
+
+function redrawMaskCanvas(){
+    maskCtx.clearRect(0,0,maskCanvas.width,maskCanvas.height);
+    maskCtx.drawImage(baseMaskCanvas,0,0,maskCanvas.width,maskCanvas.height);
+    maskCanvas.style.opacity=alpha;
 }
 
 function changeZoom(value){
     if(!currentImage) return;
+
     const canvasArea=document.getElementById("canvasArea");
-    const oldZoom=zoom, oldW=originalWidth*oldZoom, oldH=originalHeight*oldZoom;
-    let mouseRatioX=lastMouseX/oldW, mouseRatioY=lastMouseY/oldH;
-    if(!isFinite(mouseRatioX)) mouseRatioX=0.5; if(!isFinite(mouseRatioY)) mouseRatioY=0.5;
+    const oldZoom=zoom;
+    const oldW=originalWidth*oldZoom;
+    const oldH=originalHeight*oldZoom;
 
-    zoom=Number(value)/100; document.getElementById("zoomText").innerText=value;
-    resizeCanvas(false);
+    let mouseRatioX=lastMouseX/oldW;
+    let mouseRatioY=lastMouseY/oldH;
+    if(!isFinite(mouseRatioX)) mouseRatioX=0.5;
+    if(!isFinite(mouseRatioY)) mouseRatioY=0.5;
 
-    const newW=originalWidth*zoom, newH=originalHeight*zoom;
-    const targetX=mouseRatioX*newW, targetY=mouseRatioY*newH;
+    zoom=Number(value)/100;
+    document.getElementById("zoomText").innerText=value;
+
+    resizeCanvas();
+
+    const newW=originalWidth*zoom;
+    const newH=originalHeight*zoom;
+    const targetX=mouseRatioX*newW;
+    const targetY=mouseRatioY*newH;
+
     canvasArea.scrollLeft=targetX-canvasArea.clientWidth/2;
     canvasArea.scrollTop=targetY-canvasArea.clientHeight/2;
 }
@@ -220,60 +258,115 @@ function setColor(color,el){drawColor=color;document.querySelectorAll(".color-do
 function changeBrush(value){brushSize=Number(value);document.getElementById("brushText").innerText=value}
 function changeAlpha(value){alpha=Number(value)/100;document.getElementById("alphaText").innerText=value;maskCanvas.style.opacity=alpha}
 
-function getMousePos(e){const rect=maskCanvas.getBoundingClientRect();return{x:e.clientX-rect.left,y:e.clientY-rect.top}}
+function getMousePos(e){
+    const rect=maskCanvas.getBoundingClientRect();
+    return {x:e.clientX-rect.left,y:e.clientY-rect.top};
+}
+
+// 画布坐标 -> 原图坐标（关键修复）
+function canvasToImage(x,y){ return {x:x/zoom,y:y/zoom}; }
+// 原图坐标 -> 画布坐标（关键修复）
+function imageToCanvas(x,y){ return {x:x*zoom,y:y*zoom}; }
 
 maskCanvas.addEventListener("mousedown",e=>{
     if(!currentImage) return;
-    const pos=getMousePos(e); lastMouseX=pos.x; lastMouseY=pos.y;
+
+    const pos=getMousePos(e);
+    lastMouseX=pos.x; lastMouseY=pos.y;
 
     if(tool==="polygon"){
         if(e.button===2) return;
+
+        const imgPos=canvasToImage(pos.x,pos.y);
+
         if(e.detail===2){ finalizePolygon(); return; }
-        polygonPoints.push(pos); polygonHover=pos; redrawPolygonOverlay(); return;
+
+        polygonPoints.push(imgPos);      // 存原图坐标
+        polygonHover=imgPos;            // 存原图坐标
+        redrawPolygonOverlay();
+        return;
     }
 
-    drawing=true; saveHistory(); draw(pos.x,pos.y);
+    drawing=true;
+    saveHistory();
+
+    const imgPos=canvasToImage(pos.x,pos.y);
+    drawToBase(imgPos.x,imgPos.y);
+    redrawMaskCanvas();
 });
 
 maskCanvas.addEventListener("mousemove",e=>{
-    const pos=getMousePos(e); lastMouseX=pos.x; lastMouseY=pos.y;
+    const pos=getMousePos(e);
+    lastMouseX=pos.x; lastMouseY=pos.y;
+
     if(tool==="polygon"){
-        polygonHover=pos;
-        if(polygonPoints.length>0) redrawPolygonOverlay();
+        if(polygonPoints.length>0){
+            polygonHover=canvasToImage(pos.x,pos.y);   // 存原图坐标
+            redrawPolygonOverlay();
+        }
         return;
     }
+
     if(!drawing) return;
-    draw(pos.x,pos.y);
+    const imgPos=canvasToImage(pos.x,pos.y);
+    drawToBase(imgPos.x,imgPos.y);
+    redrawMaskCanvas();
 });
 
 maskCanvas.addEventListener("mouseup",()=>{drawing=false;updatePixelCount()});
 maskCanvas.addEventListener("mouseleave",()=>{drawing=false});
-maskCanvas.addEventListener("contextmenu",e=>{ if(tool==="polygon"){ e.preventDefault(); polygonPoints=[]; polygonHover=null; clearOverlay(); } });
+
+maskCanvas.addEventListener("contextmenu",e=>{
+    if(tool==="polygon"){
+        e.preventDefault();
+        polygonPoints=[]; polygonHover=null;
+        clearOverlay();
+    }
+});
 
 maskCanvas.addEventListener("wheel",function(e){
     if(!currentImage) return;
     e.preventDefault();
-    const pos=getMousePos(e); lastMouseX=pos.x; lastMouseY=pos.y;
+
+    const pos=getMousePos(e);
+    lastMouseX=pos.x; lastMouseY=pos.y;
+
     const slider=document.getElementById("zoomSlider");
     let currentValue=Number(slider.value);
-    currentValue += (e.deltaY<0?10:-10);
+    currentValue += (e.deltaY<0 ? 10 : -10);
     currentValue=Math.max(50,Math.min(300,currentValue));
-    slider.value=currentValue; changeZoom(currentValue);
+
+    slider.value=currentValue;
+    changeZoom(currentValue);
 },{passive:false});
 
 window.addEventListener("keydown",e=>{
-    if(tool==="polygon" && e.key==="Escape"){ polygonPoints=[]; polygonHover=null; clearOverlay(); }
+    if(tool==="polygon" && e.key==="Escape"){
+        polygonPoints=[]; polygonHover=null; clearOverlay();
+    }
 });
 
-function draw(x,y){
-    maskCtx.globalAlpha=1.0; maskCtx.lineCap="round"; maskCtx.lineJoin="round";
-    if(tool==="draw"){ maskCtx.globalCompositeOperation="source-over"; maskCtx.fillStyle=drawColor; }
-    else{ maskCtx.globalCompositeOperation="destination-out"; maskCtx.fillStyle="rgba(0,0,0,1)"; }
-    maskCtx.beginPath(); maskCtx.arc(x,y,brushSize,0,Math.PI*2); maskCtx.fill();
-    maskCtx.globalCompositeOperation="source-over";
+function drawToBase(x,y){
+    baseMaskCtx.globalAlpha=1.0;
+    baseMaskCtx.lineCap="round";
+    baseMaskCtx.lineJoin="round";
+
+    if(tool==="draw"){
+        baseMaskCtx.globalCompositeOperation="source-over";
+        baseMaskCtx.fillStyle=drawColor;
+    }else{
+        baseMaskCtx.globalCompositeOperation="destination-out";
+        baseMaskCtx.fillStyle="rgba(0,0,0,1)";
+    }
+
+    baseMaskCtx.beginPath();
+    baseMaskCtx.arc(x,y,brushSize/zoom,0,Math.PI*2); // 保持视觉笔刷一致
+    baseMaskCtx.fill();
+
+    baseMaskCtx.globalCompositeOperation="source-over";
 }
 
-function clearOverlay(){ overlayCtx.clearRect(0,0,overlayCanvas.width,overlayCanvas.height) }
+function clearOverlay(){overlayCtx.clearRect(0,0,overlayCanvas.width,overlayCanvas.height)}
 
 function redrawPolygonOverlay(){
     clearOverlay();
@@ -283,65 +376,132 @@ function redrawPolygonOverlay(){
     overlayCtx.fillStyle=drawColor;
     overlayCtx.lineWidth=2;
 
+    const p0=imageToCanvas(polygonPoints[0].x,polygonPoints[0].y);
     overlayCtx.beginPath();
-    overlayCtx.moveTo(polygonPoints[0].x, polygonPoints[0].y);
-    for(let i=1;i<polygonPoints.length;i++) overlayCtx.lineTo(polygonPoints[i].x, polygonPoints[i].y);
-    if(polygonHover) overlayCtx.lineTo(polygonHover.x, polygonHover.y);
+    overlayCtx.moveTo(p0.x,p0.y);
+
+    for(let i=1;i<polygonPoints.length;i++){
+        const p=imageToCanvas(polygonPoints[i].x,polygonPoints[i].y);
+        overlayCtx.lineTo(p.x,p.y);
+    }
+
+    if(polygonHover){
+        const hp=imageToCanvas(polygonHover.x,polygonHover.y);
+        overlayCtx.lineTo(hp.x,hp.y);
+    }
+
     overlayCtx.stroke();
 
     for(const p of polygonPoints){
+        const cp=imageToCanvas(p.x,p.y);
         overlayCtx.beginPath();
-        overlayCtx.arc(p.x,p.y,4,0,Math.PI*2);
+        overlayCtx.arc(cp.x,cp.y,4,0,Math.PI*2);
         overlayCtx.fill();
     }
 }
 
 function finalizePolygon(){
     if(polygonPoints.length<3) return;
+
     saveHistory();
 
-    maskCtx.globalCompositeOperation="source-over";
-    maskCtx.fillStyle=drawColor;
-    maskCtx.beginPath();
-    maskCtx.moveTo(polygonPoints[0].x, polygonPoints[0].y);
-    for(let i=1;i<polygonPoints.length;i++) maskCtx.lineTo(polygonPoints[i].x, polygonPoints[i].y);
-    maskCtx.closePath();
-    maskCtx.fill();
+    baseMaskCtx.globalCompositeOperation="source-over";
+    baseMaskCtx.fillStyle=drawColor;
+    baseMaskCtx.beginPath();
+    baseMaskCtx.moveTo(polygonPoints[0].x,polygonPoints[0].y);
 
-    polygonPoints=[]; polygonHover=null; clearOverlay(); updatePixelCount();
+    for(let i=1;i<polygonPoints.length;i++){
+        baseMaskCtx.lineTo(polygonPoints[i].x,polygonPoints[i].y);
+    }
+
+    baseMaskCtx.closePath();
+    baseMaskCtx.fill();
+
+    polygonPoints=[]; polygonHover=null;
+    clearOverlay();
+    redrawMaskCanvas();
+    updatePixelCount();
 }
 
-function saveHistory(){const data=maskCtx.getImageData(0,0,maskCanvas.width,maskCanvas.height);historyStack.push(data);if(historyStack.length>30)historyStack.shift()}
-function undo(){if(historyStack.length===0){alert("没有可返回的操作");return}const data=historyStack.pop();maskCtx.putImageData(data,0,0);updatePixelCount()}
-function clearMask(){if(!currentImage)return;maskCtx.clearRect(0,0,maskCanvas.width,maskCanvas.height);updatePixelCount()}
-function resetAll(){if(!currentImage)return;clearMask();historyStack=[];elapsed=0;annotationStartDate=null;annotationEndDate=null;polygonPoints=[];polygonHover=null;clearOverlay();document.getElementById("timer").innerText="00:00";stopTimer()}
-function updatePixelCount(){if(!currentImage)return;const imageData=maskCtx.getImageData(0,0,maskCanvas.width,maskCanvas.height).data;let count=0;for(let i=3;i<imageData.length;i+=4)if(imageData[i]>0)count++;document.getElementById("pixelCount").innerText=count}
+function saveHistory(){
+    const temp=document.createElement("canvas");
+    temp.width=baseMaskCanvas.width;
+    temp.height=baseMaskCanvas.height;
+    temp.getContext("2d").drawImage(baseMaskCanvas,0,0);
+    historyStack.push(temp);
+    if(historyStack.length>30) historyStack.shift();
+}
+
+function undo(){
+    if(historyStack.length===0){alert("没有可返回的操作");return}
+    const prev=historyStack.pop();
+    baseMaskCtx.clearRect(0,0,baseMaskCanvas.width,baseMaskCanvas.height);
+    baseMaskCtx.drawImage(prev,0,0);
+    redrawMaskCanvas();
+    updatePixelCount();
+}
+
+function clearMask(){
+    if(!currentImage) return;
+    baseMaskCtx.clearRect(0,0,baseMaskCanvas.width,baseMaskCanvas.height);
+    redrawMaskCanvas();
+    updatePixelCount();
+}
+
+function resetAll(){
+    if(!currentImage) return;
+    clearMask();
+    historyStack=[];
+    elapsed=0;
+    annotationStartDate=null;
+    annotationEndDate=null;
+    polygonPoints=[]; polygonHover=null;
+    clearOverlay();
+    document.getElementById("timer").innerText="00:00";
+    stopTimer();
+}
+
+function updatePixelCount(){
+    if(!currentImage) return;
+    const data=baseMaskCtx.getImageData(0,0,baseMaskCanvas.width,baseMaskCanvas.height).data;
+    let count=0;
+    for(let i=3;i<data.length;i+=4) if(data[i]>0) count++;
+    document.getElementById("pixelCount").innerText=count;
+}
 
 function getBinaryMaskCanvas(){
     const tempCanvas=document.createElement("canvas");
-    tempCanvas.width=originalWidth; tempCanvas.height=originalHeight;
+    tempCanvas.width=originalWidth;
+    tempCanvas.height=originalHeight;
+
     const tempCtx=tempCanvas.getContext("2d");
-    tempCtx.drawImage(maskCanvas,0,0,originalWidth,originalHeight);
-    const imageData=tempCtx.getImageData(0,0,originalWidth,originalHeight), data=imageData.data;
+    tempCtx.drawImage(baseMaskCanvas,0,0);
+
+    const imageData=tempCtx.getImageData(0,0,originalWidth,originalHeight);
+    const data=imageData.data;
+
     for(let i=0;i<data.length;i+=4){
         const value=data[i+3]>0?255:0;
         data[i]=value; data[i+1]=value; data[i+2]=value; data[i+3]=255;
     }
+
     tempCtx.putImageData(imageData,0,0);
     return tempCanvas;
 }
 
 function getMaskPixelCount(){
-    const temp=getBinaryMaskCanvas().getContext("2d").getImageData(0,0,originalWidth,originalHeight).data;
-    let count=0; for(let i=0;i<temp.length;i+=4) if(temp[i]>0) count++;
+    const data=getBinaryMaskCanvas().getContext("2d").getImageData(0,0,originalWidth,originalHeight).data;
+    let count=0;
+    for(let i=0;i<data.length;i+=4) if(data[i]>0) count++;
     return count;
 }
 
 function downloadMaskFile(){
-    const maskCanvasOut=getBinaryMaskCanvas();
+    const out=getBinaryMaskCanvas();
     const maskName=getBaseName(currentFileName)+"_mask.png";
     const link=document.createElement("a");
-    link.download=maskName; link.href=maskCanvasOut.toDataURL("image/png");
+    link.download=maskName;
+    link.href=out.toDataURL("image/png");
     document.body.appendChild(link); link.click(); document.body.removeChild(link);
 }
 
@@ -371,7 +531,8 @@ Mask Ratio: ${maskRatio}%
     const blob=new Blob([content],{type:"text/plain;charset=utf-8"});
     const url=URL.createObjectURL(blob);
     const link=document.createElement("a");
-    link.download=infoName; link.href=url;
+    link.download=infoName;
+    link.href=url;
     document.body.appendChild(link); link.click(); document.body.removeChild(link);
     setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
@@ -385,7 +546,9 @@ function saveAll(){
 
 function submitMask(){
     if(!currentImage){alert("请先加载图像");return}
-    annotationEndDate=new Date(); stopTimer();
+    annotationEndDate=new Date();
+    stopTimer();
+
     downloadMaskFile();
     setTimeout(()=>{
         downloadInfoFile();
