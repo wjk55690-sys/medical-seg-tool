@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>医学图像病灶分割标注系统</title>
+<style>
+body{margin:0;font-family:"Microsoft YaHei",Arial;background:#f5f5f5}
+.top-bar{height:80px;background:#fafafa;border-bottom:1px solid #ddd;display:flex;align-items:center;padding:0 24px;gap:12px}
+.timer{font-size:24px;font-weight:bold;background:#f1f1eb;border:1px solid #ddd;padding:10px 18px;border-radius:10px;min-width:80px;text-align:center}
+button{font-size:18px;padding:12px 24px;border:1px solid #bbb;background:white;border-radius:10px;cursor:pointer}
+button:hover{background:#f0f0f0}
+.main{display:flex;height:calc(100vh - 80px)}
+.canvas-area{flex:1;background:#111;overflow:auto;position:relative}
+.canvas-center{min-width:100%;min-height:100%;display:flex;justify-content:center;align-items:center}
+.canvas-wrapper{position:relative;display:inline-block}
+canvas{position:absolute;top:0;left:0}
+#imageCanvas{position:relative;background:#111}
+#maskCanvas{cursor:crosshair}
+.empty-tip{color:#777;font-size:18px;text-align:center}
+.side-bar{width:300px;background:#fff;border-left:1px solid #ddd;padding:20px;box-sizing:border-box;overflow-y:auto}
+.section{border-bottom:1px solid #ddd;padding-bottom:18px;margin-bottom:18px}
+.section-title{font-size:18px;margin-bottom:12px;color:#555}
+.tool-btn{width:100%;margin-bottom:8px;text-align:left}
+.tool-btn.active{background:#e8f0ff;border-color:#4a80f0}
+.color-row{display:flex;gap:10px;flex-wrap:wrap}
+.color-dot{width:28px;height:28px;border-radius:50%;border:2px solid transparent;cursor:pointer}
+.color-dot.active{border:3px solid #111}
+input[type="range"]{width:100%}
+.file-name{font-size:15px;background:#f6f6f6;border:1px solid #ddd;padding:8px;border-radius:6px;word-break:break-all}
+.bottom-zoom{position:fixed;right:330px;bottom:20px;width:260px;background:rgba(255,255,255,.96);border:1px solid #ccc;border-radius:12px;padding:12px;box-shadow:0 2px 8px rgba(0,0,0,.15)}
+</style>
+</head>
+
+<body>
+<div class="top-bar">
+    <div class="timer" id="timer">00:00</div>
+    <button onclick="startTimer()">开始</button>
+    <button onclick="resetAll()">重置</button>
+    <input type="file" id="fileInput" accept="image/*" style="display:none" onchange="loadImage()">
+    <button onclick="document.getElementById('fileInput').click()">加载图像</button>
+    <button onclick="undo()">返回</button>
+    <button onclick="clearMask()">清除全部</button>
+    <button onclick="downloadMask()">保存掩码</button>
+    <button onclick="submitMask()">提交</button>
+</div>
+
+<div class="main">
+    <div class="canvas-area" id="canvasArea">
+        <div class="canvas-center">
+            <div id="emptyTip" class="empty-tip">
+                <p>加载医学图像开始标注</p>
+                <p>支持 PNG / JPG / JPEG / BMP / TIFF</p>
+            </div>
+
+            <div class="canvas-wrapper" id="canvasWrapper" style="display:none;">
+                <canvas id="imageCanvas"></canvas>
+                <canvas id="maskCanvas"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <div class="side-bar">
+        <div class="section">
+            <div class="section-title">当前图像</div>
+            <div class="file-name" id="fileName">未加载图像</div>
+        </div>
+
+        <div class="section">
+            <div class="section-title">绘制工具</div>
+            <button class="tool-btn active" id="drawBtn" onclick="setTool('draw')">自由绘制</button>
+            <button class="tool-btn" id="eraseBtn" onclick="setTool('erase')">橡皮擦</button>
+        </div>
+
+        <div class="section">
+            <div class="section-title">颜色</div>
+            <div class="color-row">
+                <div class="color-dot active" style="background:#ff4d4f" onclick="setColor('#ff4d4f',this)"></div>
+                <div class="color-dot" style="background:#fa8c16" onclick="setColor('#fa8c16',this)"></div>
+                <div class="color-dot" style="background:#fadb14" onclick="setColor('#fadb14',this)"></div>
+                <div class="color-dot" style="background:#52c41a" onclick="setColor('#52c41a',this)"></div>
+                <div class="color-dot" style="background:#1677ff" onclick="setColor('#1677ff',this)"></div>
+                <div class="color-dot" style="background:#9254de" onclick="setColor('#9254de',this)"></div>
+            </div>
+        </div>
+
+        <div class="section">
+            <div class="section-title">笔刷大小：<span id="brushText">8</span>px</div>
+            <input type="range" min="1" max="80" value="8" oninput="changeBrush(this.value)">
+        </div>
+
+        <div class="section">
+            <div class="section-title">透明度：<span id="alphaText">60</span>%</div>
+            <input type="range" min="10" max="100" value="60" oninput="changeAlpha(this.value)">
+        </div>
+
+        <div class="section">
+            <div class="section-title">掩码信息</div>
+            <p>已标注像素：<b id="pixelCount">0</b></p>
+            <p>掩码命名：<span id="maskName">—</span></p>
+        </div>
+    </div>
+</div>
+
+<div class="bottom-zoom">
+    <div>图像缩放：<span id="zoomText">100</span>%</div>
+    <input type="range" min="50" max="300" value="100" id="zoomSlider" oninput="changeZoom(this.value)">
+</div>
+
+<script>
+const imageCanvas=document.getElementById("imageCanvas");
+const maskCanvas=document.getElementById("maskCanvas");
+const imgCtx=imageCanvas.getContext("2d");
+const maskCtx=maskCanvas.getContext("2d");
+
+let currentImage=null;
+let currentFileName="";
+let originalWidth=0;
+let originalHeight=0;
+
+let drawing=false;
+let tool="draw";
+let brushSize=8;
+let drawColor="#ff4d4f";
+let alpha=0.6;
+let zoom=1.0;
+
+let historyStack=[];
+let timer=null;
+let startTime=null;
+let elapsed=0;
+
+let lastMouseX=0;
+let lastMouseY=0;
+
+function formatTime(seconds){
+    const m=Math.floor(seconds/60);
+    const s=Math.floor(seconds%60);
+    return String(m).padStart(2,"0")+":"+String(s).padStart(2,"0");
+}
+
+function startTimer(){
+    if(!currentImage){
+        alert("请先加载图像");
+        return;
+    }
+    startTime=Date.now()-elapsed*1000;
+    if(timer) clearInterval(timer);
+    timer=setInterval(()=>{
+        elapsed=(Date.now()-startTime)/1000;
+        document.getElementById("timer").innerText=formatTime(elapsed);
+    },200);
+}
+
+function stopTimer(){
+    if(timer) clearInterval(timer);
+    timer=null;
+}
+
+function loadImage(){
+    const file=document.getElementById("fileInput").files[0];
+    if(!file) return;
+
+    currentFileName=file.name;
+    document.getElementById("fileName").innerText=currentFileName;
+
+    const baseName=getBaseName(currentFileName);
+    document.getElementById("maskName").innerText=baseName+"_mask.png";
+
+    const reader=new FileReader();
+    reader.onload=function(e){
+        const img=new Image();
+        img.onload=function(){
+            currentImage=img;
+            originalWidth=img.width;
+            originalHeight=img.height;
+
+            zoom=1.0;
+            document.getElementById("zoomSlider").value=100;
+            document.getElementById("zoomText").innerText=100;
+
+            document.getElementById("emptyTip").style.display="none";
+            document.getElementById("canvasWrapper").style.display="inline-block";
+
+            historyStack=[];
+            elapsed=0;
+            document.getElementById("timer").innerText="00:00";
+            stopTimer();
+
+            resizeCanvas(true);
+            clearMask();
+        };
+        img.src=e.target.result;
+    };
+    reader.readAsDataURL(file);
+}
+
+function getBaseName(filename){
+    const idx=filename.lastIndexOf(".");
+    return idx===-1 ? filename : filename.substring(0,idx);
+}
+
+function resizeCanvas(firstLoad=false){
+    const oldMask=document.createElement("canvas");
+    oldMask.width=maskCanvas.width;
+    oldMask.height=maskCanvas.height;
+
+    if(maskCanvas.width>0 && maskCanvas.height>0){
+        oldMask.getContext("2d").drawImage(maskCanvas,0,0);
+    }
+
+    const w=Math.floor(originalWidth*zoom);
+    const h=Math.floor(originalHeight*zoom);
+
+    imageCanvas.width=w;
+    imageCanvas.height=h;
+    maskCanvas.width=w;
+    maskCanvas.height=h;
+
+    const wrapper=document.getElementById("canvasWrapper");
+    wrapper.style.width=w+"px";
+    wrapper.style.height=h+"px";
+
+    imgCtx.clearRect(0,0,w,h);
+    imgCtx.drawImage(currentImage,0,0,w,h);
+
+    if(!firstLoad && oldMask.width>0 && oldMask.height>0){
+        maskCtx.drawImage(oldMask,0,0,w,h);
+    }
+
+    maskCanvas.style.opacity=alpha;
+}
+
+function changeZoom(value){
+    if(!currentImage) return;
+
+    const canvasArea=document.getElementById("canvasArea");
+    const oldZoom=zoom;
+    const oldW=originalWidth*oldZoom;
+    const oldH=originalHeight*oldZoom;
+
+    const mouseRatioX=lastMouseX/oldW;
+    const mouseRatioY=lastMouseY/oldH;
+
+    zoom=Number(value)/100;
+    document.getElementById("zoomText").innerText=value;
+
+    resizeCanvas(false);
+
+    const newW=originalWidth*zoom;
+    const newH=originalHeight*zoom;
+
+    const targetX=mouseRatioX*newW;
+    const targetY=mouseRatioY*newH;
+
+    canvasArea.scrollLeft=targetX-canvasArea.clientWidth/2;
+    canvasArea.scrollTop=targetY-canvasArea.clientHeight/2;
+}
+
+function setTool(t){
+    tool=t;
+    document.getElementById("drawBtn").classList.remove("active");
+    document.getElementById("eraseBtn").classList.remove("active");
+
+    if(t==="draw"){
+        document.getElementById("drawBtn").classList.add("active");
+    }else{
+        document.getElementById("eraseBtn").classList.add("active");
+    }
+}
+
+function setColor(color,el){
+    drawColor=color;
+    document.querySelectorAll(".color-dot").forEach(e=>e.classList.remove("active"));
+    el.classList.add("active");
+}
+
+function changeBrush(value){
+    brushSize=Number(value);
+    document.getElementById("brushText").innerText=value;
+}
+
+function changeAlpha(value){
+    alpha=Number(value)/100;
+    document.getElementById("alphaText").innerText=value;
+    maskCanvas.style.opacity=alpha;
+}
+
+function getMousePos(e){
+    const rect=maskCanvas.getBoundingClientRect();
+    return {
+        x:e.clientX-rect.left,
+        y:e.clientY-rect.top
+    };
+}
+
+maskCanvas.addEventListener("mousedown",e=>{
+    if(!currentImage) return;
+    drawing=true;
+    saveHistory();
+
+    const pos=getMousePos(e);
+    lastMouseX=pos.x;
+    lastMouseY=pos.y;
+    draw(pos.x,pos.y);
+});
+
+maskCanvas.addEventListener("mousemove",e=>{
+    const pos=getMousePos(e);
+    lastMouseX=pos.x;
+    lastMouseY=pos.y;
+
+    if(!drawing) return;
+    draw(pos.x,pos.y);
+});
+
+maskCanvas.addEventListener("mouseup",()=>{
+    drawing=false;
+    updatePixelCount();
+});
+
+maskCanvas.addEventListener("mouseleave",()=>{
+    drawing=false;
+});
+
+function draw(x,y){
+    maskCtx.globalAlpha=1.0;
+    maskCtx.lineCap="round";
+    maskCtx.lineJoin="round";
+
+    if(tool==="draw"){
+        maskCtx.globalCompositeOperation="source-over";
+        maskCtx.fillStyle=drawColor;
+    }else{
+        maskCtx.globalCompositeOperation="destination-out";
+        maskCtx.fillStyle="rgba(0,0,0,1)";
+    }
+
+    maskCtx.beginPath();
+    maskCtx.arc(x,y,brushSize,0,Math.PI*2);
+    maskCtx.fill();
+    maskCtx.globalCompositeOperation="source-over";
+}
+
+function saveHistory(){
+    const data=maskCtx.getImageData(0,0,maskCanvas.width,maskCanvas.height);
+    historyStack.push(data);
+    if(historyStack.length>30) historyStack.shift();
+}
+
+function undo(){
+    if(historyStack.length===0){
+        alert("没有可返回的操作");
+        return;
+    }
+    const data=historyStack.pop();
+    maskCtx.putImageData(data,0,0);
+    updatePixelCount();
+}
+
+function clearMask(){
+    if(!currentImage) return;
+    maskCtx.clearRect(0,0,maskCanvas.width,maskCanvas.height);
+    updatePixelCount();
+}
+
+function resetAll(){
+    if(!currentImage) return;
+    clearMask();
+    historyStack=[];
+    elapsed=0;
+    document.getElementById("timer").innerText="00:00";
+    stopTimer();
+}
+
+function updatePixelCount(){
+    if(!currentImage) return;
+
+    const imageData=maskCtx.getImageData(0,0,maskCanvas.width,maskCanvas.height);
+    const data=imageData.data;
+
+    let count=0;
+    for(let i=3;i<data.length;i+=4){
+        if(data[i]>0) count++;
+    }
+    document.getElementById("pixelCount").innerText=count;
+}
+
+function getBinaryMaskCanvas(){
+    const tempCanvas=document.createElement("canvas");
+    tempCanvas.width=originalWidth;
+    tempCanvas.height=originalHeight;
+    const tempCtx=tempCanvas.getContext("2d");
+
+    tempCtx.drawImage(maskCanvas,0,0,originalWidth,originalHeight);
+
+    const imageData=tempCtx.getImageData(0,0,originalWidth,originalHeight);
+    const data=imageData.data;
+
+    for(let i=0;i<data.length;i+=4){
+        const marked=data[i+3]>0;
+        const value=marked ? 255 : 0;
+
+        data[i]=value;
+        data[i+1]=value;
+        data[i+2]=value;
+        data[i+3]=255;
+    }
+
+    tempCtx.putImageData(imageData,0,0);
+    return tempCanvas;
+}
+
+function downloadMask(){
+    if(!currentImage){
+        alert("请先加载图像");
+        return;
+    }
+
+    const maskCanvasOut=getBinaryMaskCanvas();
+    const baseName=getBaseName(currentFileName);
+    const maskName=baseName+"_mask.png";
+
+    const link=document.createElement("a");
+    link.download=maskName;
+    link.href=maskCanvasOut.toDataURL("image/png");
+    link.click();
+}
+
+function submitMask(){
+    if(!currentImage){
+        alert("请先加载图像");
+        return;
+    }
+
+    stopTimer();
+    downloadMask();
+
+    alert(
+        "提交完成\\n" +
+        "用时：" + formatTime(elapsed) + "\\n" +
+        "掩码文件名：" + getBaseName(currentFileName) + "_mask.png"
+    );
+}
+</script>
+</body>
+</html>
