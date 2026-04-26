@@ -229,7 +229,6 @@ function loadImage(){
             resizeCanvas(true);
             clearMask();
 
-            // 图像真正加载完成并显示到画布后，自动开始计时
             startTimer();
         };
 
@@ -520,7 +519,9 @@ function downloadMaskFile(){
     const link=document.createElement("a");
     link.download=maskName;
     link.href=maskCanvasOut.toDataURL("image/png");
+    document.body.appendChild(link);
     link.click();
+    document.body.removeChild(link);
 }
 
 function downloadInfoFile(){
@@ -555,11 +556,18 @@ Mask Ratio: ${maskRatio}%
 `;
 
     const blob=new Blob([content],{type:"text/plain;charset=utf-8"});
+    const url=URL.createObjectURL(blob);
+
     const link=document.createElement("a");
     link.download=infoName;
-    link.href=URL.createObjectURL(blob);
+    link.href=url;
+    document.body.appendChild(link);
     link.click();
-    URL.revokeObjectURL(link.href);
+    document.body.removeChild(link);
+
+    setTimeout(()=>{
+        URL.revokeObjectURL(url);
+    },1000);
 }
 
 function saveAll(){
@@ -571,7 +579,10 @@ function saveAll(){
     annotationEndDate=new Date();
 
     downloadMaskFile();
-    downloadInfoFile();
+
+    setTimeout(()=>{
+        downloadInfoFile();
+    },500);
 }
 
 function submitMask(){
@@ -584,14 +595,17 @@ function submitMask(){
     stopTimer();
 
     downloadMaskFile();
-    downloadInfoFile();
 
-    alert(
-        "提交完成\\n" +
-        "用时：" + formatTime(elapsed) + "\\n" +
-        "掩码文件名：" + getBaseName(currentFileName) + "_mask.png\\n" +
-        "信息文件名：" + getBaseName(currentFileName) + "_info.txt"
-    );
+    setTimeout(()=>{
+        downloadInfoFile();
+
+        alert(
+            "提交完成\\n" +
+            "用时：" + formatTime(elapsed) + "\\n" +
+            "掩码文件名：" + getBaseName(currentFileName) + "_mask.png\\n" +
+            "信息文件名：" + getBaseName(currentFileName) + "_info.txt"
+        );
+    },500);
 }
 </script>
 </body>
