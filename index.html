@@ -37,14 +37,12 @@ input[type="range"]{width:100%}
     <div class="timer" id="timer">00:00</div>
     <button onclick="startTimer()">开始</button>
     <button onclick="pauseTimer()">暂停</button>
-    <button onclick="resetAll()">重置</button>
 
     <input type="file" id="fileInput" accept="image/*" style="display:none" onchange="loadImage()">
     <button onclick="document.getElementById('fileInput').click()">加载图像</button>
 
     <button onclick="undo()">返回</button>
     <button onclick="clearMask()">清除全部</button>
-    <button onclick="saveAll()">保存掩码</button>
     <button onclick="submitMask()">提交</button>
 </div>
 
